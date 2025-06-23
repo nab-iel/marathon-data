@@ -39,8 +39,24 @@ def load_samsung_heart_rate_csv(export_base_path):
     print(f"Reading heart rate data from: {os.path.basename(hr_csv_path)}")
     try:
         hr_df = pd.read_csv(hr_csv_path, skiprows=1, index_col=False)
+        # Fix for shifted columns: Drop the first column if it's unnamed.
+        if hr_df.columns[0].strip().startswith('Unnamed:'):
+            hr_df = hr_df.iloc[:, 1:]
+            
+        # Add dayfirst=True to correctly parse DD/MM/YYYY format
         hr_df['timestamp'] = pd.to_datetime(hr_df['end_time'], utc=True, dayfirst=True)
         hr_df.rename(columns={'heart_rate': 'heart_rate_bpm'}, inplace=True)
+
+        # --- FIX FOR DROPPED '1' IN HEART RATE DATA ---
+        # If a heart rate is improbably low for a workout (e.g., < 90),
+        # assume it's a data error and add 100.
+        improbably_low_hr_threshold = 90
+        mask = hr_df['heart_rate_bpm'] < improbably_low_hr_threshold
+        if mask.any():
+            print(f"  - Found {mask.sum()} heart rate records below {improbably_low_hr_threshold} bpm. Adjusting by +100.")
+            hr_df.loc[mask, 'heart_rate_bpm'] += 100
+        # --- END OF FIX ---
+
         return hr_df[['timestamp', 'heart_rate_bpm']].sort_values('timestamp').reset_index(drop=True)
     except Exception as e:
         print(f"  - Warning: Could not parse heart rate file {os.path.basename(hr_csv_path)}: {e}")
@@ -167,7 +183,7 @@ def create_aggregate_summaries(data_structure):
 
 
 if __name__ == '__main__':
-    samsung_health_export_directory = './samsung-data' 
+    samsung_health_export_directory = './samsung_data' 
 
     if not os.path.isdir(samsung_health_export_directory):
         print("="*50)
