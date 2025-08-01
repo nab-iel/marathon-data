@@ -140,6 +140,62 @@ def engineer_activity_features(metadata):
 
     return features
 
+def get_samsung_resting_hr(export_base_path):
+    """
+    Reads all monthly heart rate CSVs from Health Sync, and estimates the daily
+    resting heart rate by taking the minimum value for each day.
+    """
+    hr_data_path = os.path.join(export_base_path, 'Samsung health data', 'Health Sync Heart rate')
+
+    if not os.path.isdir(hr_data_path):
+        print(f"  - Samsung Health Sync heart rate directory not found at: {hr_data_path}")
+        return pd.DataFrame()
+
+    months = ["January", "February", "March", "April", "May", "June",
+              "July", "August", "September", "October", "November", "December"]
+
+    monthly_files = [f for f in os.listdir(hr_data_path) if f.startswith('Heart rate ') and f.endswith('.csv') and any(month in f for month in months)]
+
+    if not monthly_files:
+        print(f"  - No monthly 'Heart rate [Month].csv' files found in {hr_data_path}.")
+        return pd.DataFrame()
+
+    all_hr_data = []
+    for file_name in monthly_files:
+        try:
+            file_path = os.path.join(hr_data_path, file_name)
+            df = pd.read_csv(file_path)
+            all_hr_data.append(df)
+        except Exception as e:
+            print(f"  - Warning: Could not process Samsung HR file {file_name}: {e}")
+            continue
+
+    if not all_hr_data:
+        print("  - No Samsung HR data could be loaded.")
+        return pd.DataFrame()
+
+    hr_df = pd.concat(all_hr_data, ignore_index=True)
+    hr_df.rename(columns={'Heart rate': 'Resting HR'}, inplace=True)
+
+    # Convert 'Date' column to datetime objects to access time components
+    hr_df['timestamp'] = pd.to_datetime(hr_df['Date'])
+
+    # Filter for waking hours (9:00 AM to 11:59 PM) to get a more accurate RHR
+    # by excluding sleeping heart rate.
+    waking_hours_df = hr_df[hr_df['timestamp'].dt.hour >= 9].copy()
+
+    if waking_hours_df.empty:
+        print("  - No Samsung HR data found within the waking hours (9am-12am).")
+        return pd.DataFrame()
+
+    daily_rhr = waking_hours_df.groupby(waking_hours_df['timestamp'].dt.date)['Resting HR'].mean().reset_index()
+    daily_rhr.rename(columns={'timestamp': 'Date'}, inplace=True)
+    daily_rhr['Date'] = pd.to_datetime(daily_rhr['Date'], utc=True)
+    daily_rhr['Source'] = 'Samsung Health'
+
+    print(f"  - Successfully processed {len(daily_rhr)} daily resting heart rate records from {len(monthly_files)} Samsung Health files.")
+    return daily_rhr[['Date', 'Resting HR', 'Source']]
+
 def create_aggregate_summaries(data_structure):
     """Creates weekly and monthly summaries from the enriched metadata."""
     if not data_structure:
@@ -171,7 +227,6 @@ def create_aggregate_summaries(data_structure):
             df.drop(columns='Elapsed Time', inplace=True)
         
     return weekly_summary, monthly_summary
-
 
 if __name__ == '__main__':
     samsung_health_export_directory = './samsung_data' 
