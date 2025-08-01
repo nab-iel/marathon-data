@@ -98,37 +98,33 @@ def organise_strava_data(export_base_path):
     for index, activity in master_df.iterrows():
         activity_id = activity['Activity ID']
         gpx_filename = activity['Filename']
-        
-        print(f"\nProcessing Activity ID: {activity_id} ({activity['Activity Type']})")
+        metadata = activity.to_dict()
+
+        # Prioritize 'Moving Time' over 'Elapsed Time' for more accurate pace calculations.
+        # This ensures that any downstream calculations for pace use the time spent
+        # actively running, not the total elapsed time including pauses.
+        if 'Moving Time' in metadata and pd.notna(metadata['Moving Time']):
+            metadata['Elapsed Time'] = metadata['Moving Time']
+
+        print(f"\nProcessing Activity ID: {activity_id} ({metadata['Activity Type']})")
 
         # Skip if there's no associated file
         if pd.isna(gpx_filename):
             print("  - No filename associated. Storing metadata only.")
-            strava_data_structure[activity_id] = {
-                'metadata': activity.to_dict(),
-                'track_data': None
-            }
+            strava_data_structure[activity_id] = {'metadata': metadata, 'track_data': None}
             continue
 
         # Construct the full path to the GPX file
         gpx_full_path = os.path.join(activities_folder_path, gpx_filename)
-        print(f"  - Expected GPX file path: {gpx_full_path}")
 
         if os.path.exists(gpx_full_path):
             print(f"  - Found file: {gpx_filename}. Reading and cleaning...")
             track_df = process_gpx_file(gpx_full_path)
-            
-            strava_data_structure[activity_id] = {
-                'metadata': activity.to_dict(),
-                'track_data': track_df
-            }
+            strava_data_structure[activity_id] = {'metadata': metadata, 'track_data': track_df}
         else:
             print(f"  - File not found: {gpx_filename}. Storing metadata only.")
-            strava_data_structure[activity_id] = {
-                'metadata': activity.to_dict(),
-                'track_data': None
-            }
-            
+            strava_data_structure[activity_id] = {'metadata': metadata, 'track_data': None}
+
     print("\nProcessing complete.")
     return strava_data_structure
 
@@ -158,7 +154,14 @@ def engineer_activity_features(track_df):
     # 3. Calculate Pace Variability
     features['pace_variability_std'] = round(track_df['pace_min_per_km'].std(), 2)
 
-    # 4. Calculate Cadence Metrics (if data exists)
+    # 4. Calculate Elevation Gain from track points
+    if 'elevation_m' in track_df.columns and track_df['elevation_m'].notna().any():
+        elevation_diff = track_df['elevation_m'].diff()
+        # Sum only the positive changes (gains). This will overwrite the value from activities.csv
+        # for higher accuracy when a GPX file is present.
+        features['Elevation Gain'] = round(elevation_diff[elevation_diff > 0].sum(), 2)
+
+    # 5. Calculate Cadence Metrics (if data exists)
     if 'cadence_spm' in track_df.columns and track_df['cadence_spm'].notna().any():
         moving_df = track_df[track_df['pace_min_per_km'] < PACE_ZONES['P5_Recovery'][1]]
         if not moving_df.empty:
