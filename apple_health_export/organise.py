@@ -260,6 +260,7 @@ def engineer_activity_features(track_df):
     track_df['pace_zone'] = pd.cut(track_df['pace_min_per_km'], bins=pace_bins, labels=PACE_ZONES.keys(), right=False)
     time_in_pace_zones = track_df.groupby('pace_zone', observed=False)['time_diff_s'].sum().to_dict()
     features['time_in_pace_zones_s'] = {k: v for k, v in time_in_pace_zones.items() if pd.notna(k)}
+    print(f"  - Time in pace zones: {features['time_in_pace_zones_s']}" )
     pace_training_load = sum((duration_s / 60) * PACE_ZONE_MULTIPLIERS.get(zone, 0) for zone, duration_s in features['time_in_pace_zones_s'].items())
     features['training_load_pace'] = round(pace_training_load, 2)
     features['pace_variability_std'] = round(track_df['pace_min_per_km'].std(), 2)
