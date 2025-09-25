@@ -85,10 +85,12 @@ def parse_apple_health_xml(xml_path):
     hr_records = [r.attrib for r in all_records if r.attrib['type'] == 'HKQuantityTypeIdentifierHeartRate']
     distance_records = [r.attrib for r in all_records if r.attrib['type'] == 'HKQuantityTypeIdentifierDistanceWalkingRunning']
     calories_records = [r.attrib for r in all_records if r.attrib['type'] == 'HKQuantityTypeIdentifierActiveEnergyBurned']
-    
+    rhr_records = [r.attrib for r in all_records if r.attrib['type'] == 'HKQuantityTypeIdentifierRestingHeartRate']
+
     hr_df = pd.DataFrame(hr_records)
     distance_df = pd.DataFrame(distance_records)
     calories_df = pd.DataFrame(calories_records)
+    rhr_df = pd.DataFrame(rhr_records)
     
     routes = []
     for elem in root.iter('WorkoutRoute'):
@@ -101,6 +103,7 @@ def parse_apple_health_xml(xml_path):
 
     print(f"Found {initial_workout_count} total workouts. After filtering, processing {len(workout_df)} activities.")
     print(f"Found {len(hr_df)} heart rate records, {len(distance_df)} distance records, and {len(calories_df)} active energy records.")
+    print(f"Found {len(rhr_df)} resting heart rate records.")
     print(f"Found {len(routes_df)} workout routes.")
 
     # Save to CSV
@@ -108,6 +111,7 @@ def parse_apple_health_xml(xml_path):
     os.makedirs(output_dir, exist_ok=True)
     workout_df.to_csv(os.path.join(output_dir, 'workouts.csv'), index=False)
     hr_df.to_csv(os.path.join(output_dir, 'heart_rate.csv'), index=False)
+    rhr_df.to_csv(os.path.join(output_dir, 'resting_heart_rate.csv'), index=False)
     distance_df.to_csv(os.path.join(output_dir, 'distance.csv'), index=False)
     calories_df.to_csv(os.path.join(output_dir, 'calories.csv'), index=False)
     routes_df.to_csv(os.path.join(output_dir, 'routes.csv'), index=False)
@@ -249,6 +253,35 @@ def organise_apple_health_data(export_base_path):
     print("\nProcessing complete.")
     return apple_health_data_structure
 
+def get_apple_resting_hr(processed_data_dir='output'):
+    """
+    Reads and processes the pre-parsed resting heart rate data from Apple Health.
+    """
+    rhr_csv = os.path.join(processed_data_dir, 'resting_heart_rate.csv')
+    if not os.path.exists(rhr_csv):
+        print("  - No Apple Health resting heart rate data found.")
+        return pd.DataFrame()
+
+    try:
+        rhr_df = pd.read_csv(rhr_csv)
+        if rhr_df.empty:
+            return pd.DataFrame()
+
+        rhr_df['date'] = pd.to_datetime(rhr_df['startDate']).dt.date
+        rhr_df['value'] = pd.to_numeric(rhr_df['value'])
+
+        # Apple Health can have multiple RHR entries per day. We'll average them.
+        daily_rhr = rhr_df.groupby('date')['value'].mean().reset_index()
+        daily_rhr.rename(columns={'date': 'Date', 'value': 'Resting HR'}, inplace=True)
+        daily_rhr['Date'] = pd.to_datetime(daily_rhr['Date'], utc=True)
+        daily_rhr['Source'] = 'Apple Health'
+
+        print(f"  - Successfully processed {len(daily_rhr)} daily resting heart rate records from Apple Health.")
+        return daily_rhr
+    except Exception as e:
+        print(f"  - Could not process Apple resting heart rate data: {e}")
+        return pd.DataFrame()
+
 def engineer_activity_features(track_df):
     """Calculates all new features for a single activity's track data."""
     if track_df is None or track_df.empty or 'time_diff_s' not in track_df.columns:
@@ -325,6 +358,7 @@ if __name__ == '__main__':
 
         # Organise the data from the clean CSVs into the main data structure.
         my_apple_health_data = organise_apple_health_data(apple_health_export_directory)
+        resting_health_data =  get_apple_resting_hr(apple_health_export_directory)
         print(f"\nSuccessfully organised {len(my_apple_health_data)} activities into the data structure.")
 
         # Feature engineering etc
